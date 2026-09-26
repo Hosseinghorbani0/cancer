@@ -1,2 +1,22 @@
-# cancer
-This is a breast cancer detection project built with machine learning LogisticRegressio was used to build this project
+# تشخیص تومور پستان
+
+پروژه‌ای آموزشی برای مقایسهٔ رگرسیون لجستیک با یک شبکهٔ عصبی چندلایه روی مجموعه‌دادهٔ تشخیص تومور پستان ویسکانسین. این ابزار برای تشخیص یا تصمیم‌گیری پزشکی تأیید نشده است.
+
+## اجرا
+
+به Python 3.10 یا جدیدتر نیاز است.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python cancer.py
+```
+
+فایل `cc.csv` باید کنار `cancer.py` باشد. اجرای برنامه داده را به‌صورت طبقه‌بندی‌شده به آموزش و آزمون تقسیم می‌کند، پیش‌پردازش را فقط داخل pipelineهای آموزش انجام می‌دهد و تنظیمات شبکهٔ عصبی را با اعتبارسنجی متقابل پنج‌بخشی روی دادهٔ آموزش انتخاب می‌کند. معیارهای accuracy، precision، recall، F1 و ROC-AUC گزارش می‌شوند؛ مدل نهایی بر اساس accuracy اعتبارسنجی انتخاب می‌شود.
+
+## خروجی‌ها
+
+در پوشهٔ `outputs/` نمودار ROC و ماتریس درهم‌ریختگی (`model_evaluation.png`)، نمودار لایه‌ها و اتصالات وزن‌دار شبکهٔ عصبی (`neural_network.png`)، مدل منتخب (`breast_cancer_model.joblib`) و مدل شبکهٔ عصبی (`breast_cancer_mlp.joblib`) ذخیره می‌شوند.
+
+نتایج به تقسیم داده و تنظیمات مدل وابسته‌اند و تضمینی برای عملکرد روی داده‌های دیگر نیست. به‌ویژه در کاربردهای سلامت، recall و خطاهای منفی کاذب باید با متخصص بررسی شوند؛ خروجی این پروژه جایگزین ارزیابی بالینی نیست.
