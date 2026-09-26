@@ -61,7 +61,13 @@ def build_mlp_search(cross_validator: StratifiedKFold) -> GridSearchCV:
 			"mlpclassifier__alpha": [0.0001, 0.001],
 			"mlpclassifier__early_stopping": [True, False],
 		},
-		scoring={"accuracy": "accuracy", "recall": "recall", "f1": "f1", "roc_auc": "roc_auc"},
+		scoring={
+			"accuracy": "accuracy",
+			"precision": "precision",
+			"recall": "recall",
+			"f1": "f1",
+			"roc_auc": "roc_auc",
+		},
 		refit="accuracy",
 		cv=cross_validator,
 		n_jobs=1,
@@ -195,60 +201,99 @@ def main() -> None:
 		stratify=labels,
 	)
 	cross_validator = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
-	scoring = {"accuracy": "accuracy", "recall": "recall", "f1": "f1", "roc_auc": "roc_auc"}
+	scoring = {
+		"accuracy": "accuracy",
+		"precision": "precision",
+		"recall": "recall",
+		"f1": "f1",
+		"roc_auc": "roc_auc",
+	}
 	models = build_models()
 
 	print(f"Dataset: {len(features)} samples, {features.shape[1]} features")
-	print("5-fold cross-validation on training data:")
+	print("5-fold nested cross-validation on training data:")
 	logistic_model = models["Logistic regression"]
 	logistic_scores = cross_validate(
 		logistic_model, x_train, y_train, cv=cross_validator, scoring=scoring
 	)
-	logistic_accuracy = logistic_scores["test_accuracy"].mean()
-	logistic_summary = " | ".join(
-		f"{metric}: {logistic_scores[f'test_{metric}'].mean():.3f}"
-		f" +/- {logistic_scores[f'test_{metric}'].std():.3f}"
-		for metric in scoring
-	)
-	print(f"  Logistic regression: {logistic_summary}")
 	logistic_model.fit(x_train, y_train)
 
+	mlp_nested_scores = cross_validate(
+		build_mlp_search(cross_validator),
+		x_train,
+		y_train,
+		cv=cross_validator,
+		scoring=scoring,
+	)
 	mlp_search = build_mlp_search(cross_validator)
 	mlp_search.fit(x_train, y_train)
 	mlp_model = mlp_search.best_estimator_
-	best_mlp_index = mlp_search.best_index_
-	mlp_summary = " | ".join(
-		f"{metric}: {mlp_search.cv_results_[f'mean_test_{metric}'][best_mlp_index]:.3f}"
-		for metric in scoring
-	)
-	print(f"  Tuned deep neural network: {mlp_summary}")
 	print(f"  Selected MLP architecture: {mlp_search.best_params_['mlpclassifier__hidden_layer_sizes']}")
 
 	models["Deep neural network"] = mlp_model
-	selected_name = max(
-		{"Logistic regression": logistic_accuracy, "Deep neural network": mlp_search.best_score_},
-		key=lambda name: logistic_accuracy if name == "Logistic regression" else mlp_search.best_score_,
-	)
+	cross_validation_scores = {
+		"Logistic regression": logistic_scores,
+		"Deep neural network": mlp_nested_scores,
+	}
+	cross_validation_accuracy = {
+		name: scores["test_accuracy"].mean()
+		for name, scores in cross_validation_scores.items()
+	}
+	for name, scores in cross_validation_scores.items():
+		summary = " | ".join(
+			f"{metric}: {scores[f'test_{metric}'].mean():.3f}"
+			f" +/- {scores[f'test_{metric}'].std():.3f}"
+			for metric in scoring
+		)
+		print(f"  {name}: {summary}")
+
+	selected_name = max(cross_validation_accuracy, key=cross_validation_accuracy.get)
 	selected_model = models[selected_name]
-	predictions = selected_model.predict(x_test)
-	probabilities = selected_model.predict_proba(x_test)[:, 1]
+	predictions_by_model = {}
+	metrics_rows = []
+	for name, model in models.items():
+		predictions = model.predict(x_test)
+		probabilities = model.predict_proba(x_test)[:, 1]
+		predictions_by_model[name] = predictions
+		cv_scores = cross_validation_scores[name]
+		metrics_rows.append(
+			{
+				"model": name,
+				"cv_accuracy_mean": cv_scores["test_accuracy"].mean(),
+				"cv_accuracy_std": cv_scores["test_accuracy"].std(),
+				"cv_recall_mean": cv_scores["test_recall"].mean(),
+				"cv_roc_auc_mean": cv_scores["test_roc_auc"].mean(),
+				"test_accuracy": accuracy_score(y_test, predictions),
+				"test_precision": precision_score(y_test, predictions),
+				"test_recall": recall_score(y_test, predictions),
+				"test_f1": f1_score(y_test, predictions),
+				"test_roc_auc": roc_auc_score(y_test, probabilities),
+			}
+		)
+
 	print(f"\nSelected by training cross-validation: {selected_name}")
-	print("Held-out test results:")
-	print(f"  Accuracy:  {accuracy_score(y_test, predictions):.3f}")
-	print(f"  Precision: {precision_score(y_test, predictions):.3f}")
-	print(f"  Recall:    {recall_score(y_test, predictions):.3f}")
-	print(f"  F1 score:  {f1_score(y_test, predictions):.3f}")
-	print(f"  ROC-AUC:   {roc_auc_score(y_test, probabilities):.3f}")
+	print("Held-out test results (both models):")
+	for row in metrics_rows:
+		print(
+			f"  {row['model']}: accuracy={row['test_accuracy']:.3f}, "
+			f"precision={row['test_precision']:.3f}, recall={row['test_recall']:.3f}, "
+			f"F1={row['test_f1']:.3f}, ROC-AUC={row['test_roc_auc']:.3f}"
+		)
+	predictions = predictions_by_model[selected_name]
 	print("\nClassification report:")
 	print(classification_report(y_test, predictions, target_names=["Benign", "Malignant"]))
 
 	mlp = mlp_model.named_steps["mlpclassifier"]
 	save_evaluation_chart(models, x_test, y_test, predictions, selected_name)
 	save_network_diagram(mlp, features.shape[1])
+	pd.DataFrame(metrics_rows).to_csv(
+		OUTPUT_DIR / "model_metrics.csv", index=False, float_format="%.4f"
+	)
 	joblib.dump(selected_model, OUTPUT_DIR / "breast_cancer_model.joblib")
 	joblib.dump(mlp_model, OUTPUT_DIR / "breast_cancer_mlp.joblib")
 	print("Generated outputs/model_evaluation.png")
 	print("Generated outputs/neural_network.png")
+	print("Generated outputs/model_metrics.csv")
 	print(f"Saved outputs/breast_cancer_model.joblib ({selected_name})")
 	print("Saved outputs/breast_cancer_mlp.joblib")
 
